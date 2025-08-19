@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:scrollbars="none">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <!-- Dynamic 2x2 Tracker Grid -->
+
+        <ImageView
+            android:id="@+id/device_list_info_button"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Device list info"
+            android:padding="8dp"
+            android:src="@drawable/baseline_error_outline_24" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Connected Devices"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:gravity="center"
+            android:layout_marginBottom="16dp" />
+
+        <GridLayout
+            android:id="@+id/tracker_grid"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:columnCount="2"
+            android:rowCount="2"
+            android:layout_margin="16dp"
+            android:background="@drawable/border">
+
+            <!-- Device Slot 0 -->
+            <include 
+                layout="@layout/tracker_item"
+                android:id="@+id/device_slot_0"
+                android:layout_width="0dp"
+                android:layout_height="120dp"
+                android:layout_columnWeight="1"
+                android:layout_margin="4dp" />
+
+            <!-- Device Slot 1 -->
+            <include 
+                layout="@layout/tracker_item"
+                android:id="@+id/device_slot_1"
+                android:layout_width="0dp"
+                android:layout_height="120dp"
+                android:layout_columnWeight="1"
+                android:layout_margin="4dp" />
+
+            <!-- Device Slot 2 -->
+            <include 
+                layout="@layout/tracker_item"
+                android:id="@+id/device_slot_2"
+                android:layout_width="0dp"
+                android:layout_height="120dp"
+                android:layout_columnWeight="1"
+                android:layout_margin="4dp" />
+
+            <!-- Device Slot 3 -->
+            <include 
+                layout="@layout/tracker_item"
+                android:id="@+id/device_slot_3"
+                android:layout_width="0dp"
+                android:layout_height="120dp"
+                android:layout_columnWeight="1"
+                android:layout_margin="4dp" />
+
+        </GridLayout>
+
+        <!-- Buttons Section -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:layout_marginTop="24dp">
+
+            <Button
+                android:id="@+id/scannerButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_margin="8dp"
+                android:text="Add Devices"
+                android:textSize="16sp" />
+
+            <Button
+                android:id="@+id/loggingButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_margin="8dp"
+                android:text="Start Logging"
+                android:textSize="16sp"
+                android:backgroundTint="@android:color/holo_green_dark" />
+
+            <Button
+                android:id="@+id/resetButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_margin="8dp"
+                android:text="Reset"
+                android:textSize="16sp"
+                android:backgroundTint="@android:color/holo_red_dark" />
+
+            <!-- Reconnect Button -->
+            <Button
+                android:id="@+id/reconnectButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_margin="8dp"
+                android:text="Reconnect Devices"
+                android:textSize="16sp"
+                android:backgroundTint="@android:color/holo_blue_dark" />
+
+            <!-- Additional Status Buttons -->
+            <Button
+                android:id="@+id/sensorsStatusButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_margin="8dp"
+                android:text="Device Information"
+                android:textSize="16sp"
+                android:backgroundTint="@android:color/holo_orange_dark" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+</ScrollView>

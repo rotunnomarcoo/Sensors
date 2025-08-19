@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="120dp"
+    android:orientation="vertical"
+    android:padding="8dp"
+    android:background="@drawable/tracker_item_background"
+    android:clickable="true"
+    android:focusable="true">
+
+    <RelativeLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <ImageView
+            android:id="@+id/tracker_image"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_centerHorizontal="true"
+            android:src="@drawable/tracker_disconnected" />
+
+        <ImageView
+            android:id="@+id/color_indicator"
+            android:layout_width="16dp"
+            android:layout_height="16dp"
+            android:layout_alignRight="@id/tracker_image"
+            android:layout_alignTop="@id/tracker_image"
+            android:src="@drawable/baseline_lightbulb_24" />
+
+    </RelativeLayout>
+
+    <TextView
+        android:id="@+id/tracker_name"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Device Name"
+        android:textSize="14sp"
+        android:textStyle="bold"
+        android:gravity="center"
+        android:maxLines="1"
+        android:ellipsize="end" />
+
+    <TextView
+        android:id="@+id/tracker_mac"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="MAC Address"
+        android:textSize="11sp"
+        android:gravity="center"
+        android:maxLines="1"
+        android:ellipsize="middle" />
+
+    <TextView
+        android:id="@+id/tracker_position"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Position"
+        android:textSize="13sp"
+        android:textStyle="bold"
+        android:gravity="center"
+        android:maxLines="1"
+        android:ellipsize="end" />
+
+    <TextView
+        android:id="@+id/tracker_battery"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Battery"
+        android:textSize="11sp"
+        android:gravity="center"
+        android:maxLines="1" />
+
+    <TextView
+        android:id="@+id/tracker_connection_status"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="DISCONNECTED"
+        android:textSize="9sp"
+        android:gravity="center"
+        android:maxLines="1"
+        android:textStyle="bold"
+        android:textColor="@android:color/holo_red_dark" />
+
+</LinearLayout>
