@@ -1,6 +1,6 @@
 /**
- * Main application package for the Sensors MetaWear management app.
- * This application handles Bluetooth Low Energy (BLE) sensor devices for motion tracking.
+ * MetaWear Sensor Management Application
+ * Graduation Project - Motion Tracking System using Bluetooth LE Sensors
  */
 package com.example.sensors;
 
@@ -46,14 +46,11 @@ import androidx.navigation.ui.NavigationUI;
 
 // View binding and MetaWear SDK components
 import com.example.sensors.databinding.ActivityMainBinding;
-import com.mbientlab.metawear.Route;
 import com.mbientlab.metawear.Subscriber;
 import com.mbientlab.metawear.android.BtleService;
 import com.mbientlab.metawear.builder.RouteBuilder;
 import com.mbientlab.metawear.builder.RouteComponent;
-import com.mbientlab.metawear.module.Accelerometer;
-import com.mbientlab.metawear.module.AccelerometerBmi270;
-import com.mbientlab.metawear.module.Gyro;
+
 import com.mbientlab.metawear.module.Led;
 import com.mbientlab.metawear.module.Logging;
 import com.mbientlab.metawear.module.Settings;
@@ -77,6 +74,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 // Third-party library imports
@@ -85,314 +83,289 @@ import androidx.work.PeriodicWorkRequest;  // For background work scheduling
 import androidx.work.WorkManager;
 
 /**
- * Helper class to encapsulate device information and state.
- * Used throughout the application to maintain consistent device data structure.
+ * Data structure to hold sensor device information
+ * Consolidates all relevant device properties for easy management
  */
 class DeviceInfo {
-    String macAddress;        // Unique Bluetooth MAC address
-    String name;             // User-friendly device name
-    String position;         // Body position assignment (e.g., "Left Wrist")
-    ledEnum color;           // LED color assignment for visual identification
-    String battery;          // Current battery level percentage
-    boolean isConnected;     // Current connection state
-    String connectionStatus; // Detailed connection status message
+    String macAddress;        
+    String name;             
+    String position;         
+    ledEnum color;           
+    String battery;          
+    boolean isConnected;     
+    String connectionStatus; 
 }
 
 /**
- * MainActivity - Core application class for MetaWear sensor management
+ * Caches UI component references for each device grid slot
+ * Improves performance by avoiding repeated view lookups
+ */
+class DeviceGridViewHolder {
+    final ImageView trackerImage;
+    final ImageView colorIndicator;
+    final TextView nameText;
+    final TextView macText;
+    final TextView positionText;
+    final TextView batteryText;
+    final TextView connectionStatusText;
+    
+    DeviceGridViewHolder(View gridItem) {
+        trackerImage = gridItem.findViewById(R.id.tracker_image);
+        colorIndicator = gridItem.findViewById(R.id.color_indicator);
+        nameText = gridItem.findViewById(R.id.tracker_name);
+        macText = gridItem.findViewById(R.id.tracker_mac);
+        positionText = gridItem.findViewById(R.id.tracker_position);
+        batteryText = gridItem.findViewById(R.id.tracker_battery);
+        connectionStatusText = gridItem.findViewById(R.id.tracker_connection_status);
+    }
+}
+
+/**
+ * Main Activity for Motion Tracking System
  * 
- * This activity serves as the main interface for managing up to 4 MetaWear sensor devices.
- * Key functionalities include:
- * - Bluetooth device scanning and connection management
- * - Sensor data logging and real-time monitoring
- * - LED control for device identification
- * - Battery level monitoring and alerts
- * - Position assignment for body-worn sensors
- * - Persistent state management using SharedPreferences
+ * Manages up to 4 MetaWear BLE sensors for body motion analysis.
+ * Handles device discovery, connection management, data logging,
+ * and real-time monitoring of sensor status and battery levels.
  * 
- * The activity implements ServiceConnection to manage the MetaWear BLE service
- * and maintains synchronized collections for thread-safe operations.
+ * Key Features:
+ * - Multi-device Bluetooth LE management
+ * - Synchronized data collection from accelerometer and gyroscope
+ * - Visual feedback through LED control
+ * - Persistent configuration storage
+ * - Real-time battery monitoring
  */
 public class MainActivity extends AppCompatActivity implements ServiceConnection {
 
-    // ========== TIMING AND THRESHOLD CONSTANTS ==========
+    // Configuration constants for timing and thresholds
+    private static final int CONNECTION_DELAY_MS = 200;        // Bluetooth connection spacing
+    private static final int LOGGING_DELAY_MS = 500;           // Logging startup delay  
+    private static final int STOP_LOGGING_DELAY_MS = 300;      // Logging shutdown delay
+    private static final int BATTERY_UPDATE_INTERVAL_MS = 300000; // 5-minute battery checks
+    private static final int UI_UPDATE_INTERVAL_MS = 60000;    // 1-minute UI refresh
+    private static final int BATTERY_LOW_THRESHOLD = 20;       // Low battery warning at 20%
     
-    /** Delay between device connection attempts to prevent overwhelming BLE stack */
-    private static final int CONNECTION_DELAY_MS = 200;
-    
-    /** Delay before starting logging operations to ensure all devices are ready */
-    private static final int LOGGING_DELAY_MS = 500;
-    
-    /** Delay when stopping logging to ensure clean shutdown */
-    private static final int STOP_LOGGING_DELAY_MS = 300;
-    
-    /** Interval for automatic battery level updates (5 minutes) */
-    private static final int BATTERY_UPDATE_INTERVAL_MS = 300000;
-    
-    /** Interval for UI refresh operations (1 minute) */
-    private static final int UI_UPDATE_INTERVAL_MS = 60000;
-    
-    /** Battery level threshold for low battery warnings (20%) */
-    private static final int BATTERY_LOW_THRESHOLD = 20;
-    
-    // ========== DEVICE CONFIGURATION ==========
-    
-    /** Available body positions for sensor placement - currently in Italian, to be internationalized */
+    // Available body positions for sensor placement
     private static final String[] POSITIONS = {
-            "Polso",      // Polso sinistro
-            "Vita",           // Vita
-            "Caviglia Destra",     // Caviglia destra
-            "Caviglia Sinistra"       // Caviglia sinistra
+            "Polso",               // Wrist position
+            "Vita",                // Waist position  
+            "Caviglia Destra",     // Right ankle
+            "Caviglia Sinistra"    // Left ankle
     };
 
-    // ========== DATA STRUCTURES AND COLLECTIONS ==========
-
-    /** 
-     * Map to track battery routes to avoid duplicates
-     * Prevents multiple battery monitoring routes for the same device
-     */
+    // Data storage and tracking
     private final Map<String, Boolean> batteryRouteAdded = new HashMap<>();
-
-    // ========== REQUEST CODES AND PERMISSIONS ==========
-    
-    /** Request code for device scanning activity results */
-    public static final int SCAN_DEVICES = 1;
-    
-    /** Request code for Bluetooth enable dialog */
-    private static final int REQUEST_ENABLE_BT = 2;
-    
-    /** Constant for granted permission status */
-    private static final int GRANTED = PackageManager.PERMISSION_GRANTED;
-    
-    /** Request code for runtime permission requests */
-    private static final int PERMISSION_REQUEST = 1;
-
-    // ========== UI AND NAVIGATION COMPONENTS ==========
-    
-    /** Configuration for app bar and navigation */
-    private AppBarConfiguration appBarConfiguration;
-    
-    /** View binding for type-safe view access */
-    private ActivityMainBinding binding;
-
-    // ========== BLUETOOTH AND METAWEAR COMPONENTS ==========
-    
-    /** Static Bluetooth adapter reference for app-wide access */
-    public static BluetoothAdapter btAdapter = null;
-
-    /** 
-     * Synchronized list of connected MetaWear boards
-     * Thread-safe collection to handle concurrent access from BLE callbacks
-     */
-    public static List<MetaWearBoard> boards = Collections.synchronizedList(new ArrayList<>());
-    
-    /** Service binder for MetaWear BLE service communication */
-    public static BtleService.LocalBinder serviceBinder;
-
-    // ========== DATA MANAGEMENT ==========
-    
-    /** 
-     * Static sensor data storage (no more RecyclerView)
-     * Collects accelerometer and gyroscope data from all connected devices
-     */
-    public static ArrayList<SensorData> sensorDataList = new ArrayList<>();
-
-    /** Reference to the main logging control button */
-    private Button loggingButton;
-    
-    /** 
-     * Persistent state manager for device configurations
-     * Stores MAC addresses, positions, colors, and logging state
-     */
-    public static SaveStruct savedMacAddresses = new SaveStruct();
-    
-    /** Flag to track if this is the initial app startup */
-    private boolean start = true;
-    
-    // ========== BACKGROUND TASK HANDLERS ==========
-    
-    /** Handler for UI updates on the main thread */
-    private final android.os.Handler uiUpdateHandler = new android.os.Handler();
-    
-    /** Runnable for periodic UI refresh operations */
-    private Runnable uiUpdater;
-
-    /** Handler for battery monitoring on the main thread */
-    private final android.os.Handler batteryHandler = new android.os.Handler();
-    
-    /** Runnable for periodic battery level updates */
-    private Runnable batteryUpdater;
-    
-    /** Static reference to the main activity instance for global access */
-    public static MainActivity instance;
-
-    // ========== UI DISPLAY COMPONENTS ==========
-    
-    /** Array of device grid items for the 4-device display layout */
-    private View[] deviceGridItems = new View[4];
-    
-    /** Animation object for visual feedback during operations */
-    private Animation pulseAnimation;
-
-    // ========== OPERATION STATE MANAGEMENT ==========
-    
-    /** 
-     * State flags to prevent concurrent operations and button spamming
-     * These flags ensure that only one operation of each type can run at a time
-     */
-    private boolean isLoggingOperationInProgress = false;  // Prevents multiple logging start/stop
-    private boolean isLEDOperationInProgress = false;      // Prevents multiple LED operations
-    private boolean isResetOperationInProgress = false;    // Prevents multiple reset operations
-
-    /** 
-     * Map to track real-time connection status for each device
-     * Used for UI updates and connection state management
-     */
     private final Map<String, Boolean> isConnected = new HashMap<>();
 
+    // Request codes and permission constants  
+    public static final int SCAN_DEVICES = 1;
+    private static final int REQUEST_ENABLE_BT = 2;
+    private static final int GRANTED = PackageManager.PERMISSION_GRANTED;
+    private static final int PERMISSION_REQUEST = 1;
+
+    // UI and navigation components
+    private AppBarConfiguration appBarConfiguration;
+    private ActivityMainBinding binding;
+
+    // Bluetooth and MetaWear components
+    public static BluetoothAdapter btAdapter = null;
+    public static List<MetaWearBoard> boards = Collections.synchronizedList(new ArrayList<>());
+    public static BtleService.LocalBinder serviceBinder;
+
+    // Data storage and state management
+    public static ArrayList<SensorData> sensorDataList = new ArrayList<>();
+    public static SaveStruct savedMacAddresses = new SaveStruct();
+    public static MainActivity instance;
+    
+    // UI component references
+    private Button loggingButton;
+    private Button resetButton;
+    private Button reconnectButton;  
+    private Button sensorsStatusButton;
+    private View[] deviceGridItems = new View[4];
+    private DeviceGridViewHolder[] deviceGridViewHolders = new DeviceGridViewHolder[4];
+    private Animation pulseAnimation;
+    
+    // Background task handlers
+    private final android.os.Handler uiUpdateHandler = new android.os.Handler();
+    private final android.os.Handler batteryHandler = new android.os.Handler();
+    private Runnable uiUpdater;
+    private Runnable batteryUpdater;
+    
+    // Operation state tracking
+    private boolean start = true;
+    private boolean isLoggingOperationInProgress = false;
+    private boolean isLEDOperationInProgress = false;
+    private boolean isResetOperationInProgress = false;
+
     /**
-     * onCreate - Main activity initialization
-     * 
-     * Sets up the UI, initializes components, checks for fresh installation,
-     * configures Bluetooth service, and establishes device connections.
-     * 
-     * @param savedInstanceState Previous state data if activity is being recreated
+     * Utility methods for common UI operations and device management
+     */
+
+    /**
+     * Changes button text temporarily during operations
+     */
+    private void setTemporaryButtonText(Button button, String tempText, Runnable task) {
+        String originalText = button.getText().toString();
+        button.setText(tempText);
+        button.setEnabled(false);
+        
+        new Thread(() -> {
+            try {
+                task.run();
+            } finally {
+                runOnUiThread(() -> {
+                    button.setText(originalText);
+                    button.setEnabled(true);
+                });
+            }
+        }).start();
+    }
+
+    /**
+     * Logs device actions with consistent format
+     */
+    private void logDeviceAction(String action, String macAddress, String status) {
+        Log.d("DeviceAction", action + " - Device: " + macAddress + " - Status: " + status);
+    }
+
+    /**
+     * Creates and shows a status dialog with consistent styling
+     */
+    private void showStatusDialog(String title, String message) {
+        new AlertDialog.Builder(this)
+                .setTitle(title)
+                .setMessage(message)
+                .setPositiveButton("OK", null)
+                .show();
+    }
+
+    /**
+     * Centralized handler management for periodic updates
+     * Starts both UI and battery update handlers
+     */
+    private void startPeriodicUpdates() {
+        if (uiUpdater != null) {
+            uiUpdateHandler.post(uiUpdater);
+        }
+        if (batteryUpdater != null) {
+            batteryHandler.post(batteryUpdater);
+        }
+    }
+
+    /**
+     * Centralized handler management for stopping updates
+     * Stops both UI and battery update handlers
+     */
+    private void stopPeriodicUpdates() {
+        uiUpdateHandler.removeCallbacks(uiUpdater);
+        batteryHandler.removeCallbacks(batteryUpdater);
+    }
+
+    /**
+     * Initializes the main activity and sets up the sensor management interface
      */
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        // Set static reference for global access throughout the application
         instance = this;
 
-        // Initialize pulse animation for visual feedback during operations
+        // Initialize visual feedback animation
         try {
-            // Load custom pulse animation if available
             pulseAnimation = AnimationUtils.loadAnimation(this, R.anim.pulse);
             pulseAnimation.setRepeatCount(Animation.INFINITE);
             pulseAnimation.setRepeatMode(Animation.REVERSE);
         } catch (Exception e) {
-            // Fallback to system animation if custom animation fails to load
             pulseAnimation = AnimationUtils.loadAnimation(this, android.R.anim.fade_in);
             pulseAnimation.setRepeatCount(Animation.INFINITE);
             pulseAnimation.setRepeatMode(Animation.REVERSE);
         }
 
-        // Bind to the MetaWear BLE service for device communication
+        // Connect to MetaWear Bluetooth service
         getApplicationContext().bindService(new Intent(this, BtleService.class),
                 this, Context.BIND_AUTO_CREATE);
 
-        // ========== FIRST RUN DETECTION AND STATE MANAGEMENT ==========
-        
-        // Check if this is the first run of the app using SharedPreferences
+        // Check for first run and load saved configuration
         SharedPreferences prefs = getSharedPreferences("app_prefs", Context.MODE_PRIVATE);
         boolean isFirstRun = prefs.getBoolean("first_run", true);
 
         if (isFirstRun) {
-            // Fresh install - start with empty state to avoid stale data
             savedMacAddresses = new SaveStruct();
             prefs.edit().putBoolean("first_run", false).apply();
-            Log.d("MainActivity", "First run detected - starting with clean state");
+            Log.d("MainActivity", "First run - clean state");
         } else {
-            // Normal startup - load saved state from persistent storage
             savedMacAddresses = readState();
-            Log.d("MainActivity", "Loading saved state from previous session");
+            Log.d("MainActivity", "Loading saved configuration");
         }
 
-        // Provide user feedback if no devices are configured yet
         if (savedMacAddresses.isEmpty())
-            Toast.makeText(this, "No devices saved", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "No devices configured", Toast.LENGTH_SHORT).show();
 
-        // ========== UI SETUP AND INITIALIZATION ==========
-        
-        // Set up view binding for type-safe view access and configure toolbar
+        // Set up user interface
         binding = ActivityMainBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
         setSupportActionBar(binding.toolbar);
 
-        // Configure navigation components with app bar integration
+        // Configure navigation
         NavController navController = Navigation.findNavController(this, R.id.nav_host_fragment_content_main);
         appBarConfiguration = new AppBarConfiguration.Builder(navController.getGraph()).build();
         NavigationUI.setupActionBarWithNavController(this, navController, appBarConfiguration);
 
-        // Initialize all UI components and event handlers
-        setupButtons();           // Configure action buttons (start/stop, LED control, etc.)
-        setupDeviceGrid();        // Initialize the 4-device display grid
-        setupDeviceListButton();  // Configure device scanning/management button
-        setupHandlers();          // Set up background task handlers for UI and battery updates
+        // Initialize components
+        setupButtons();
+        setupDeviceGrid();
+        setupDeviceListButton();
+        setupHandlers();
 
-        // ========== INITIAL STATE RESTORATION ==========
-        
-        // Set logging button text and scanner state based on current logging status
+        // Restore UI state based on saved configuration
         if (savedMacAddresses.isLogging()) {
             loggingButton.setText("Stop");
-            // Disable scanner during active logging to prevent state conflicts
             if (FirstFragment.scanner != null) {
                 FirstFragment.scanner.setEnabled(false);
             }
         } else {
             loggingButton.setText("Start");
-            // Enable scanner when not logging
             if (FirstFragment.scanner != null) {
                 FirstFragment.scanner.setEnabled(true);
             }
         }
 
-        // Update the device grid display with current device states
         updateDeviceGrid();
-        
-        // Verify and request necessary permissions for BLE operations
         checkPermission();
-
-        // Start periodic background updates for UI refresh and battery monitoring
-        uiUpdateHandler.post(uiUpdater);
+        startPeriodicUpdates();
     }
 
     /**
-     * setupButtons - Initialize and configure action buttons
-     * 
-     * Sets up click listeners and initial states for logging control,
-     * LED management, and device reset functionality.
+     * Configures button click listeners and initial states
      */
     private void setupButtons() {
-        // ========== SCANNER BUTTON CONFIGURATION ==========
-        
-        // Set up scanner button for device discovery and management
+        // Scanner button for device discovery
         FirstFragment.scanner = findViewById(R.id.scannerButton);
         if (FirstFragment.scanner != null) {
             FirstFragment.scanner.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
-                    // Check if maximum device limit is reached
                     if (savedMacAddresses.getMacAddresses().size() >= 4) {
-                        Toast.makeText(MainActivity.this, "Maximum 4 devices supported. Remove a device to add new ones.", Toast.LENGTH_SHORT)
-                                .show();
+                        Toast.makeText(MainActivity.this, "Maximum 4 devices supported", Toast.LENGTH_SHORT).show();
                         return;
                     }
                     
-                    // Prevent device management during active logging
                     if (savedMacAddresses.isLogging()) {
-                        Toast.makeText(MainActivity.this, "Stop logging before adding new devices", Toast.LENGTH_SHORT)
-                                .show();
+                        Toast.makeText(MainActivity.this, "Stop logging before adding devices", Toast.LENGTH_SHORT).show();
                         return;
                     }
                     
-                    // Check for ongoing operations to prevent conflicts
                     if (isLoggingOperationInProgress || isLEDOperationInProgress || isResetOperationInProgress) {
-                        Toast.makeText(MainActivity.this, "Operation in progress, please wait...", Toast.LENGTH_SHORT)
-                                .show();
+                        Toast.makeText(MainActivity.this, "Operation in progress", Toast.LENGTH_SHORT).show();
                         return;
                     }
                     
-                    // Launch scanner activity with current connected devices list
                     Intent intent = new Intent(MainActivity.this, ScannerActivity.class);
                     startActivityForResult(intent, SCAN_DEVICES);
                 }
             });
         }
 
-        // ========== LOGGING CONTROL BUTTON CONFIGURATION ==========
-        
-        // Set up main logging control button for start/stop operations
+        // Logging control button
         loggingButton = findViewById(R.id.loggingButton);
         loggingButton.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -404,43 +377,39 @@ public class MainActivity extends AppCompatActivity implements ServiceConnection
                     Toast.makeText(MainActivity.this, "Connect exactly 4 devices to start (" + connectedDevices + "/4)", Toast.LENGTH_SHORT)
                             .show();
                 } else if (allDevicesHavePositions()) {
-                    // All requirements met - toggle logging state
+                    // Toggle logging state
                     if (savedMacAddresses.isLogging()) {
-                        stopLogging();  // Stop current logging session
+                        stopLogging();
                     } else {
-                        startLogging(); // Begin new logging session
+                        startLogging();
                     }
                 } else {
-                    // Require position assignment before logging can start
+                    // Position assignment required before logging
                     Toast.makeText(MainActivity.this, "Please assign positions to sensors first", Toast.LENGTH_SHORT)
                             .show();
                 }
             }
         });
 
-        // ========== RESET BUTTON CONFIGURATION ==========
-        
-        // Set up reset button for clearing device data and LED states
-        Button reset = findViewById(R.id.resetButton);
+        // Reset button setup
+        resetButton = findViewById(R.id.resetButton);
         
         // Disable reset during active logging to prevent data corruption
         if (savedMacAddresses.isLogging()) {
-            reset.setEnabled(false);
+            resetButton.setEnabled(false);
         } else {
-            reset.setEnabled(true);
+            resetButton.setEnabled(true);
         }
 
-        reset.setOnClickListener(new View.OnClickListener() {
+        resetButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                performReset(); // Execute comprehensive device reset
+                performReset();
             }
         });
 
-        // ========== RECONNECT BUTTON CONFIGURATION ==========
-        
-        // Set up reconnect button for re-establishing device connections
-        Button reconnectButton = findViewById(R.id.reconnectButton);
+        // Reconnect button setup
+        reconnectButton = findViewById(R.id.reconnectButton);
         reconnectButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -448,88 +417,69 @@ public class MainActivity extends AppCompatActivity implements ServiceConnection
             }
         });
 
-        // ========== DEVICE STATUS BUTTON CONFIGURATION ==========
-        
-        // Set up device information button for detailed status display
-        Button sensorsStatusButton = findViewById(R.id.sensorsStatusButton);
+        // Device status button setup
+        sensorsStatusButton = findViewById(R.id.sensorsStatusButton);
         sensorsStatusButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                // Provide immediate visual feedback during information retrieval
+                // Visual feedback during status retrieval
                 Button button = (Button) v;
                 String originalText = button.getText().toString();
                 button.setText("Retrieving device information...");
                 button.setEnabled(false);
                 
-                // Update battery status and sensor configs for all devices before showing status
+                // Update device information before displaying status
                 updateAllDeviceInformationBeforeStatus(button, originalText);
             }
         });
     }
 
     /**
-     * setupDeviceListButton - Configure the device list information button
-     * 
-     * Sets up click handling for the device list info button that displays
-     * a summary of all connected devices and their current status.
+     * Sets up the device information button
      */
     private void setupDeviceListButton() {
-        // Set up the device list info button in the UI
         ImageView deviceListButton = findViewById(R.id.device_list_info_button);
         if (deviceListButton != null) {
             deviceListButton.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
-                    showConnectedDevicesList(); // Display connected devices summary
+                    showConnectedDevicesList();
                 }
             });
         }
     }
 
     /**
-     * showConnectedDevicesList - Display summary of all connected devices
-     * 
-     * Creates and shows a dialog with detailed information about each
-     * connected device including position, battery level, and connection status.
+     * Displays a dialog with information about all configured devices
      */
     private void showConnectedDevicesList() {
-        // Check if any devices are configured
         if (savedMacAddresses.isEmpty()) {
-            Toast.makeText(this, "No devices connected", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "No devices configured", Toast.LENGTH_SHORT).show();
             return;
         }
 
-        // Build detailed device information string
         StringBuilder deviceInfo = new StringBuilder();
         ArrayList<String> macAddresses = savedMacAddresses.getMacAddresses();
 
-        // Iterate through all configured devices and collect their information
         for (int i = 0; i < macAddresses.size(); i++) {
             String macAddress = macAddresses.get(i);
             String name = savedMacAddresses.getName(macAddress);
             String position = savedMacAddresses.getPosition(macAddress);
             ledEnum color = savedMacAddresses.getColor(macAddress);
 
-            // Format device information for display
             deviceInfo.append("Device ").append(i + 1).append(":\n");
             deviceInfo.append("Name: ").append(name != null && !name.isEmpty() ? name : "Unknown").append("\n");
             deviceInfo.append("MAC: ").append(macAddress).append("\n");
-            deviceInfo.append("Position: ").append(position != null && !position.isEmpty() ? position : "Not assigned")
-                    .append("\n");
+            deviceInfo.append("Position: ").append(position != null && !position.isEmpty() ? position : "Not assigned").append("\n");
             deviceInfo.append("Color: ").append(color.toString()).append("\n");
             
-            // Add separator between devices (except for the last one)
             if (i < macAddresses.size() - 1) {
                 deviceInfo.append("\n");
             }
         }
 
         // Display the device information in a dialog
-        new AlertDialog.Builder(this)
-                .setTitle("Connected Devices (" + macAddresses.size() + ")")
-                .setMessage(deviceInfo.toString())
-                .setPositiveButton("OK", null)
-                .show();
+        showStatusDialog("Connected Devices (" + macAddresses.size() + ")", deviceInfo.toString());
     }
 
     /**
@@ -554,45 +504,37 @@ public class MainActivity extends AppCompatActivity implements ServiceConnection
     }
 
     /**
-     * setupDeviceGrid - Initialize the 4-device display grid
-     * 
-     * Sets up the visual grid that displays up to 4 connected devices
-     * with their status, positions, and interactive controls.
+     * Initializes the 4-device display grid with ViewHolders and click listeners
      */
     private void setupDeviceGrid() {
-        // ========== DEVICE GRID INITIALIZATION ==========
-        
-        // Initialize references to the 4 device slot views in the UI grid
         deviceGridItems[0] = findViewById(R.id.device_slot_0);
         deviceGridItems[1] = findViewById(R.id.device_slot_1);
         deviceGridItems[2] = findViewById(R.id.device_slot_2);
         deviceGridItems[3] = findViewById(R.id.device_slot_3);
 
-        // Set up click listeners for position assignment and device management
+        // Cache view references for better performance
+        for (int i = 0; i < deviceGridItems.length; i++) {
+            deviceGridViewHolders[i] = new DeviceGridViewHolder(deviceGridItems[i]);
+        }
+
+        // Set up click listeners for position assignment
         for (int i = 0; i < deviceGridItems.length; i++) {
             final int slotIndex = i;
-            // Each grid item opens a position assignment dialog when clicked
             deviceGridItems[i].setOnClickListener(v -> showPositionAssignmentDialog(slotIndex));
         }
     }
 
     /**
-     * setupHandlers - Initialize background task handlers
-     * 
-     * Sets up periodic background tasks for UI updates and battery monitoring.
-     * These handlers run on the main thread and perform regular maintenance tasks.
+     * Sets up background handlers for UI updates and battery monitoring
      */
     private void setupHandlers() {
-        // ========== UI UPDATE HANDLER ==========
-        
-        // Handler for periodic UI refresh operations (removed RecyclerView notifications)
+        // UI refresh handler
         uiUpdater = new Runnable() {
             @Override
             public void run() {
-                // Update sensor data timestamps for all connected devices
+                // Update sensor data timestamps
                 for (int i = 0; i < sensorDataList.size(); i++) {
                     SensorData oldData = sensorDataList.get(i);
-                    // Create updated sensor data with current timestamp
                     SensorData updated = new SensorData(
                             oldData.getMacAddress(),
                             oldData.getPosition(),
@@ -601,21 +543,16 @@ public class MainActivity extends AppCompatActivity implements ServiceConnection
                     sensorDataList.set(i, updated);
                 }
 
-                // Update device grid display instead of notifying RecyclerView
                 updateDeviceGrid();
-                
-                // Schedule next UI update
                 uiUpdateHandler.postDelayed(this, UI_UPDATE_INTERVAL_MS);
             }
         };
 
-        // ========== BATTERY MONITORING HANDLER ==========
-        
-        // Handler for periodic battery level updates during logging
+        // Battery monitoring handler
         batteryUpdater = new Runnable() {
             @Override
             public void run() {
-                // Only update batteries during active logging to reduce BLE traffic
+                // Update batteries only during logging to reduce BLE traffic
                 if (!savedMacAddresses.isLogging()) {
                     return;
                 }
@@ -637,13 +574,7 @@ public class MainActivity extends AppCompatActivity implements ServiceConnection
     }
 
     /**
-     * updateBoardBattery - Update battery level for a specific board
-     * 
-     * Connects to the specified board and reads its current battery level.
-     * Updates the stored battery information and UI display.
-     * 
-     * @param board The MetaWear board to update battery information for
-     * @return Task representing the battery update operation
+     * Updates battery level for the specified board
      */
     public Task<Void> updateBoardBattery(MetaWearBoard board) {
         return board.connectWithRetryAsync(2).continueWithTask(task -> {
@@ -771,26 +702,21 @@ public class MainActivity extends AppCompatActivity implements ServiceConnection
      * Includes comprehensive state protection and operation coordination.
      */
     private void performReset() {
-        // ========== OPERATION STATE PROTECTION ==========
-        
-        // Prevent reset during other critical operations to avoid conflicts
+        // Operation state protection
         if (isLoggingOperationInProgress || isLEDOperationInProgress || isResetOperationInProgress) {
             Toast.makeText(this, "Operation in progress, please wait...", Toast.LENGTH_SHORT).show();
             return;
         }
 
-        // Prevent reset during active logging to avoid data corruption
+        // Prevent reset during logging to avoid data corruption
         if (savedMacAddresses.isLogging()) {
             Toast.makeText(this, "Stop logging before resetting", Toast.LENGTH_SHORT).show();
             return;
         }
 
-        // ========== OPERATION INITIALIZATION ==========
-        
-        // Set operation flags and update UI to reflect reset in progress
+        // Operation initialization
         isResetOperationInProgress = true;
         isLEDOperationInProgress = true;
-        Button resetButton = findViewById(R.id.resetButton);
         resetButton.setEnabled(false);
         resetButton.setText("Resetting...");
         loggingButton.setEnabled(false);
@@ -798,7 +724,7 @@ public class MainActivity extends AppCompatActivity implements ServiceConnection
         savedMacAddresses = new SaveStruct();
         sensorDataList.clear();
 
-        // Improved LED shutdown with proper error handling and synchronization
+        // LED shutdown with proper synchronization
         if (!boards.isEmpty()) {
             AtomicInteger completedOperations = new AtomicInteger(0);
             int totalBoards = boards.size();
@@ -806,27 +732,27 @@ public class MainActivity extends AppCompatActivity implements ServiceConnection
             for (MetaWearBoard board : boards) {
                 board.connectWithRetryAsync(3).continueWithTask(task -> {
                     if (task.isFaulted() || task.isCancelled()) {
-                        Log.e("Reset", "Failed to connect to device during reset: " + board.getMacAddress());
+                        logDeviceAction("Reset", board.getMacAddress(), "Connection failed");
                         return Task.forResult(null);
                     }
                     
                     // Tear down board resources before LED cleanup
-                    Log.d("Reset", "Tearing down board resources: " + board.getMacAddress());
+                    logDeviceAction("Reset", board.getMacAddress(), "Tearing down resources");
                     //board.tearDown();
                     
                     Led led = board.getModule(Led.class);
                     if (led != null) {
                         led.stop(true);
-                        Log.d("Reset", "LED stopped for device: " + board.getMacAddress());
+                        logDeviceAction("Reset", board.getMacAddress(), "LED stopped");
                     }
                     return Task.delay(1500); // Increased delay to ensure LED turns off
                 }).continueWithTask(task -> {
                     return board.disconnectAsync();
                 }).continueWith(task -> {
                     if (task.isFaulted()) {
-                        Log.e("Reset", "Error during LED shutdown for: " + board.getMacAddress(), task.getError());
+                        logDeviceAction("Reset", board.getMacAddress(), "Error during LED shutdown: " + task.getError().getMessage());
                     } else {
-                        Log.d("Reset", "Successfully reset LED for: " + board.getMacAddress());
+                        logDeviceAction("Reset", board.getMacAddress(), "LED reset successful");
                     }
                     
                     int completed = completedOperations.incrementAndGet();
@@ -884,11 +810,16 @@ public class MainActivity extends AppCompatActivity implements ServiceConnection
             return;
         }
 
-        Button reconnectButton = findViewById(R.id.reconnectButton);
         reconnectButton.setEnabled(false);
         reconnectButton.setText("Reconnecting...");
 
-        Toast.makeText(this, "Attempting to reconnect to " + macAddresses.size() + " devices", Toast.LENGTH_SHORT).show();
+        int connectedCount = getConnectedDeviceCount();
+        boolean isRefresh = (connectedCount == macAddresses.size());
+        
+        String toastMessage = isRefresh ? 
+            "Refreshing connections for " + macAddresses.size() + " devices" :
+            "Attempting to reconnect to " + macAddresses.size() + " devices";
+        Toast.makeText(this, toastMessage, Toast.LENGTH_SHORT).show();
 
         final int[] completedReconnects = {0};
         int totalDevices = macAddresses.size();
@@ -907,10 +838,16 @@ public class MainActivity extends AppCompatActivity implements ServiceConnection
                 final MetaWearBoard finalBoard = board;
                 final String address = macAddress;
                 
-                // First disconnect, then reconnect
+                Log.d("Reconnect", "Force disconnecting and reconnecting to: " + address);
+                
+                // Always disconnect first (even if already connected) to refresh the connection
                 finalBoard.disconnectAsync().continueWithTask(task -> {
+                    // Mark as disconnected during the process
+                    isConnected.put(address, false);
+                    runOnUiThread(() -> updateDeviceGrid()); // Update UI to show disconnected state
+                    
                     // Wait a moment before reconnecting
-                    return Task.delay(1000);
+                    return Task.delay(1500);
                 }).continueWithTask(task -> {
                     Log.d("Reconnect", "Attempting to reconnect to: " + address);
                     return finalBoard.connectAsync();
@@ -931,7 +868,7 @@ public class MainActivity extends AppCompatActivity implements ServiceConnection
                         updateBoardBattery(finalBoard);
                         monitorConnection(finalBoard, address);
                         
-                        // Update LED if device has position
+                        // Update LED if device has position and not logging
                         if (!savedMacAddresses.isLogging()) {
                             updateDeviceLED(address);
                         }
@@ -940,17 +877,19 @@ public class MainActivity extends AppCompatActivity implements ServiceConnection
                         return task;
                     }
                 }).continueWith(task -> {
-                    // This runs regardless of success/failure for this device
+                    // Update UI after each device attempt
                     runOnUiThread(() -> {
                         completedReconnects[0]++;
                         
                         if (completedReconnects[0] >= totalDevices) {
                             // All reconnection attempts completed
                             reconnectButton.setEnabled(true);
-                            reconnectButton.setText("Reconnect Devices");
+                            updateButtonState();
                             
-                            int connectedCount = getConnectedDeviceCount();
-                            String message = "Reconnection complete. " + connectedCount + "/" + totalDevices + " devices connected";
+                            int finalConnectedCount = getConnectedDeviceCount();
+                            String message = isRefresh ? 
+                                "Connection refresh complete. " + finalConnectedCount + "/" + totalDevices + " devices connected" :
+                                "Reconnection complete. " + finalConnectedCount + "/" + totalDevices + " devices connected";
                             Toast.makeText(MainActivity.this, message, Toast.LENGTH_SHORT).show();
                         }
                     });
@@ -958,37 +897,31 @@ public class MainActivity extends AppCompatActivity implements ServiceConnection
                 });
             } else {
                 // Board not found, increment counter
-                completedReconnects[0]++;
-                if (completedReconnects[0] >= totalDevices) {
-                    reconnectButton.setEnabled(true);
-                    reconnectButton.setText("Reconnect Devices");
-                    
-                    int connectedCount = getConnectedDeviceCount();
-                    String message = "Reconnection complete. " + connectedCount + "/" + totalDevices + " devices connected";
-                    Toast.makeText(MainActivity.this, message, Toast.LENGTH_SHORT).show();
-                }
+                runOnUiThread(() -> {
+                    completedReconnects[0]++;
+                    if (completedReconnects[0] >= totalDevices) {
+                        reconnectButton.setEnabled(true);
+                        updateButtonState();
+                        
+                        int finalConnectedCount = getConnectedDeviceCount();
+                        String message = "Reconnection complete. " + finalConnectedCount + "/" + totalDevices + " devices connected";
+                        Toast.makeText(MainActivity.this, message, Toast.LENGTH_SHORT).show();
+                    }
+                });
             }
         }
 
-        // Re-enable button after timeout as safety measure
+        // Re-enable button after timeout as safety measure (increased from 15 to 20 seconds)
         new android.os.Handler().postDelayed(() -> {
             runOnUiThread(() -> {
                 reconnectButton.setEnabled(true);
-                reconnectButton.setText("Reconnect Devices");
+                updateButtonState();
             });
-        }, 15000); // 15 second timeout
+        }, 20000); // 20 second timeout
     }
 
     /**
-     * updateDeviceGrid - Refresh the visual device grid display
-     * 
-     * Updates the 4-device grid layout with current device information including:
-     * - Connection status and visual indicators
-     * - Device names, MAC addresses, and positions
-     * - Battery levels and color assignments
-     * - Proper handling of empty slots and disconnected devices
-     * 
-     * This method is called frequently to keep the UI synchronized with device states.
+     * Updates the visual grid showing device status, positions, and battery levels
      */
     private void updateDeviceGrid() {
         runOnUiThread(() -> {
@@ -998,17 +931,9 @@ public class MainActivity extends AppCompatActivity implements ServiceConnection
             // Update each of the 4 device slots in the grid
             for (int i = 0; i < 4; i++) {
                 View gridItem = deviceGridItems[i];
-                if (gridItem == null)
+                DeviceGridViewHolder holder = deviceGridViewHolders[i];
+                if (gridItem == null || holder == null)
                     continue;
-
-                // Get references to all UI elements within this grid item
-                ImageView trackerImage = gridItem.findViewById(R.id.tracker_image);
-                ImageView colorIndicator = gridItem.findViewById(R.id.color_indicator);
-                TextView nameText = gridItem.findViewById(R.id.tracker_name);
-                TextView macText = gridItem.findViewById(R.id.tracker_mac);
-                TextView positionText = gridItem.findViewById(R.id.tracker_position);
-                TextView batteryText = gridItem.findViewById(R.id.tracker_battery);
-                TextView connectionStatusText = gridItem.findViewById(R.id.tracker_connection_status);
 
                 // Check if this slot has an assigned device
                 if (i < macAddresses.size()) {
@@ -1018,25 +943,25 @@ public class MainActivity extends AppCompatActivity implements ServiceConnection
                     String name = savedMacAddresses.getName(macAddress);
 
                     // Show connected tracker
-                    trackerImage.setImageResource(R.drawable.tracker_connected);
+                    holder.trackerImage.setImageResource(R.drawable.tracker_connected);
 
                     // Set color indicator
-                    setColorIndicator(colorIndicator, color);
+                    setColorIndicator(holder.colorIndicator, color);
 
                     // Set texts
-                    nameText.setText(name != null && !name.isEmpty() ? name : "Device " + (i + 1));
-                    nameText.setTextColor(getResources().getColor(android.R.color.black));
+                    holder.nameText.setText(name != null && !name.isEmpty() ? name : "Device " + (i + 1));
+                    holder.nameText.setTextColor(getResources().getColor(android.R.color.black));
                     
-                    macText.setText(macAddress);
-                    macText.setTextColor(getResources().getColor(android.R.color.black));
+                    holder.macText.setText(macAddress);
+                    holder.macText.setTextColor(getResources().getColor(android.R.color.black));
                     
                     // Set position text with color coding
                     if (position != null && !position.isEmpty()) {
-                        positionText.setText(position);
-                        positionText.setTextColor(getResources().getColor(android.R.color.black));
+                        holder.positionText.setText(position);
+                        holder.positionText.setTextColor(getResources().getColor(android.R.color.black));
                     } else {
-                        positionText.setText("Tap to assign");
-                        positionText.setTextColor(getResources().getColor(android.R.color.holo_red_dark));
+                        holder.positionText.setText("Tap to assign");
+                        holder.positionText.setTextColor(getResources().getColor(android.R.color.holo_red_dark));
                     }
 
                     // Get battery from SaveStruct or SensorData
@@ -1051,61 +976,61 @@ public class MainActivity extends AppCompatActivity implements ServiceConnection
                     }
                     
                     // Set battery text with color coding
-                    batteryText.setText("Battery: " + battery);
+                    holder.batteryText.setText("Battery: " + battery);
                     if (!battery.equals("Unknown") && battery.contains("%")) {
                         try {
                             int batteryLevel = Integer.parseInt(battery.replace("%", ""));
                             if (batteryLevel >= 66) {
-                                batteryText.setTextColor(getResources().getColor(android.R.color.holo_green_dark));
+                                holder.batteryText.setTextColor(getResources().getColor(android.R.color.holo_green_dark));
                             } else if (batteryLevel >= 33) {
-                                batteryText.setTextColor(getResources().getColor(android.R.color.holo_orange_dark));
+                                holder.batteryText.setTextColor(getResources().getColor(android.R.color.holo_orange_dark));
                             } else {
-                                batteryText.setTextColor(getResources().getColor(android.R.color.holo_red_dark));
+                                holder.batteryText.setTextColor(getResources().getColor(android.R.color.holo_red_dark));
                             }
                         } catch (NumberFormatException e) {
                             // If parsing fails, use default color
-                            batteryText.setTextColor(getResources().getColor(android.R.color.white));
+                            holder.batteryText.setTextColor(getResources().getColor(android.R.color.white));
                         }
                     } else {
-                        batteryText.setTextColor(getResources().getColor(android.R.color.white)); // Default color for "Unknown"
+                        holder.batteryText.setTextColor(getResources().getColor(android.R.color.white)); // Default color for "Unknown"
                     }
 
                     // Set connection status
                     Boolean connected = isConnected.get(macAddress);
                     if (connected != null && connected) {
-                        connectionStatusText.setText("CONNECTED");
-                        connectionStatusText.setTextColor(getResources().getColor(android.R.color.holo_green_dark));
+                        holder.connectionStatusText.setText("CONNECTED");
+                        holder.connectionStatusText.setTextColor(getResources().getColor(android.R.color.holo_green_dark));
                     } else {
-                        connectionStatusText.setText("DISCONNECTED");
-                        connectionStatusText.setTextColor(getResources().getColor(android.R.color.holo_red_dark));
+                        holder.connectionStatusText.setText("DISCONNECTED");
+                        holder.connectionStatusText.setTextColor(getResources().getColor(android.R.color.holo_red_dark));
                     }
 
                     // Start pulsing animation if position not assigned
                     if (position == null || position.isEmpty()) {
                         // Check if animation is already running
-                        if (trackerImage.getAnimation() == null || trackerImage.getAnimation().hasEnded()) {
+                        if (holder.trackerImage.getAnimation() == null || holder.trackerImage.getAnimation().hasEnded()) {
                             // Create a programmatic alpha animation that definitely repeats
                             android.view.animation.AlphaAnimation alphaAnimation = new android.view.animation.AlphaAnimation(1.0f, 0.3f);
                             alphaAnimation.setDuration(800);
                             alphaAnimation.setRepeatCount(android.view.animation.Animation.INFINITE);
                             alphaAnimation.setRepeatMode(android.view.animation.Animation.REVERSE);
-                            trackerImage.startAnimation(alphaAnimation);
+                            holder.trackerImage.startAnimation(alphaAnimation);
                         }
                     } else {
-                        trackerImage.clearAnimation();
+                        holder.trackerImage.clearAnimation();
                     }
 
                     gridItem.setVisibility(View.VISIBLE);
                 } else {
                     // Show disconnected slot
-                    trackerImage.setImageResource(R.drawable.tracker_disconnected);
-                    colorIndicator.setImageResource(R.drawable.baseline_lightbulb_24);
-                    nameText.setText("Empty Slot");
-                    macText.setText("");
-                    positionText.setText("");
-                    batteryText.setText("");
-                    connectionStatusText.setText("");
-                    trackerImage.clearAnimation();
+                    holder.trackerImage.setImageResource(R.drawable.tracker_disconnected);
+                    holder.colorIndicator.setImageResource(R.drawable.baseline_lightbulb_24);
+                    holder.nameText.setText("Empty Slot");
+                    holder.macText.setText("");
+                    holder.positionText.setText("");
+                    holder.batteryText.setText("");
+                    holder.connectionStatusText.setText("");
+                    holder.trackerImage.clearAnimation();
                     gridItem.setVisibility(View.VISIBLE);
                 }
             }
@@ -1140,17 +1065,25 @@ public class MainActivity extends AppCompatActivity implements ServiceConnection
             Log.d("ButtonState", "Setting alpha to 0.5f");
         }
         
-        // Update reconnect button state
-        Button reconnectButton = findViewById(R.id.reconnectButton);
+        // Update reconnect button state - always enabled if there are devices
         if (reconnectButton != null) {
             ArrayList<String> macAddresses = savedMacAddresses.getMacAddresses();
             boolean hasDevicesToReconnect = !macAddresses.isEmpty();
             
-            reconnectButton.setEnabled(hasDevicesToReconnect && !savedMacAddresses.isLogging());
-            if (hasDevicesToReconnect && !savedMacAddresses.isLogging()) {
+            // Always enable reconnect button if devices exist, regardless of logging state
+            reconnectButton.setEnabled(hasDevicesToReconnect);
+            if (hasDevicesToReconnect) {
                 reconnectButton.setAlpha(1.0f);
+                // Update button text based on current connection status
+                int connectedCount = getConnectedDeviceCount();
+                if (connectedCount == macAddresses.size()) {
+                    reconnectButton.setText("Refresh Connections");
+                } else {
+                    reconnectButton.setText("Reconnect Devices");
+                }
             } else {
                 reconnectButton.setAlpha(0.5f);
+                reconnectButton.setText("Reconnect Devices");
             }
         }
         
@@ -1172,7 +1105,6 @@ public class MainActivity extends AppCompatActivity implements ServiceConnection
         }
         
         // Update device information button state
-        Button sensorsStatusButton = findViewById(R.id.sensorsStatusButton);
         if (sensorsStatusButton != null) {
             ArrayList<String> macAddresses = savedMacAddresses.getMacAddresses();
             boolean hasDevices = !macAddresses.isEmpty();
@@ -1593,7 +1525,7 @@ public class MainActivity extends AppCompatActivity implements ServiceConnection
         }
     }
 
-    // Improved method to turn off all LEDs with better error handling
+    // Turn off all LEDs with error handling
     private void turnOffAllLEDs() {
         if (boards.isEmpty()) {
             Log.d("LED Off", "No boards to turn off LEDs");
@@ -1639,7 +1571,7 @@ public class MainActivity extends AppCompatActivity implements ServiceConnection
                 }
 
                 showDeviceColor(board);
-                return Task.delay(1000); // Improved delay for LED to be set
+                return Task.delay(1000); // Delay for LED setting
             }).continueWithTask(task -> {
                 return board.disconnectAsync();
             }).continueWith(task -> {
@@ -1820,32 +1752,21 @@ public class MainActivity extends AppCompatActivity implements ServiceConnection
     }
 
     /**
-     * startLogging - Begin sensor data logging session
-     * 
-     * Initiates data logging for all connected devices. Performs validation checks
-     * to ensure all requirements are met before starting the logging session.
-     * Includes state protection to prevent concurrent operations.
+     * Begins sensor data logging for all connected devices
      */
     public void startLogging() {
         Log.d("StartLogging", "Starting logging operation");
 
-        // ========== OPERATION STATE PROTECTION ==========
-        
-        // Prevent multiple simultaneous operations that could cause conflicts
         if (isLoggingOperationInProgress || isLEDOperationInProgress) {
-            Toast.makeText(this, "Operation in progress, please wait...", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Operation in progress", Toast.LENGTH_SHORT).show();
             return;
         }
 
-        // ========== CONNECTION VALIDATION ==========
-        
-        // Verify that devices are connected and service is available
         if (boards.isEmpty() || !serviceBinder.isBinderAlive()) {
-            Toast.makeText(this, "No devices connected. Cannot start logging.", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "No devices connected", Toast.LENGTH_LONG).show();
             return;
         }
 
-        // All validations passed - proceed with logging setup
         proceedWithLogging();
     }
 
@@ -1901,9 +1822,8 @@ public class MainActivity extends AppCompatActivity implements ServiceConnection
         }
 
         savedMacAddresses.setLogging(true);
-        batteryHandler.post(batteryUpdater);
+        startPeriodicUpdates();
 
-        Button resetButton = findViewById(R.id.resetButton);
         resetButton.setEnabled(false);
 
         // Persist the current state to storage
@@ -1923,29 +1843,21 @@ public class MainActivity extends AppCompatActivity implements ServiceConnection
     }
 
     /**
-     * stopLogging - End current sensor data logging session
-     * 
-     * Stops data logging for all connected devices, cleans up resources,
-     * and restores UI state. Includes state protection to prevent
-     * concurrent operations that could cause data corruption.
+     * Stops sensor data logging and cleans up resources
      */
     public void stopLogging() {
         Log.d("StopLogging", "Stopping logging operation");
 
-        // ========== OPERATION STATE PROTECTION ==========
-        
-        // Prevent multiple simultaneous stop operations that could cause conflicts
         if (isLoggingOperationInProgress || isLEDOperationInProgress) {
-            Toast.makeText(this, "Operation in progress, please wait...", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "Operation in progress", Toast.LENGTH_SHORT).show();
             return;
         }
 
         if (boards.isEmpty() || !serviceBinder.isBinderAlive()) {
-            Toast.makeText(this, "No devices connected. Cannot stop logging.", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "No devices connected", Toast.LENGTH_LONG).show();
             return;
         }
 
-        // Set operation in progress and disable button
         isLoggingOperationInProgress = true;
         isLEDOperationInProgress = true;
         loggingButton.setEnabled(false);
@@ -1986,9 +1898,8 @@ public class MainActivity extends AppCompatActivity implements ServiceConnection
         }
 
         savedMacAddresses.setLogging(false);
-        batteryHandler.removeCallbacks(batteryUpdater);
+        stopPeriodicUpdates();
 
-        Button resetButton = findViewById(R.id.resetButton);
         resetButton.setEnabled(true);
 
         // Restore LEDs after logging stops
@@ -2169,6 +2080,29 @@ public class MainActivity extends AppCompatActivity implements ServiceConnection
         Map<String, DeviceInfo> deviceInfoMap = new HashMap<>();
         AtomicInteger completedUpdates = new AtomicInteger(0);
         int totalBoards = boards.size();
+        AtomicBoolean timeoutOccurred = new AtomicBoolean(false);
+        
+        // Set up 10-second timeout
+        android.os.Handler timeoutHandler = new android.os.Handler();
+        Runnable timeoutRunnable = () -> {
+            if (!timeoutOccurred.getAndSet(true)) {
+                Log.w("DeviceInfo", "Timeout occurred while retrieving device information");
+                runOnUiThread(() -> {
+                    button.setText(originalText);
+                    button.setEnabled(true);
+                    
+                    // Show partial results or timeout message
+                    if (!deviceInfoMap.isEmpty()) {
+                        Toast.makeText(this, "Timeout occurred - showing partial information", Toast.LENGTH_SHORT).show();
+                        displayDeviceInformation(deviceInfoMap);
+                    } else {
+                        Toast.makeText(this, "Timeout - failed to retrieve device information", Toast.LENGTH_SHORT).show();
+                        displayDeviceInformation(); // Show empty status
+                    }
+                });
+            }
+        };
+        timeoutHandler.postDelayed(timeoutRunnable, 10000); // 10 second timeout
         
         for (MetaWearBoard board : boards) {
             String macAddress = board.getMacAddress();
@@ -2182,8 +2116,20 @@ public class MainActivity extends AppCompatActivity implements ServiceConnection
             
             deviceInfoMap.put(macAddress, info);
             
+            // Check if device is connected first, if not attempt reconnection
+            Task<Void> connectionTask;
+            if (!board.isConnected()) {
+                Log.d("DeviceInfo", "Device " + macAddress + " not connected, attempting reconnection");
+                info.connectionStatus = "Reconnecting...";
+                connectionTask = board.connectWithRetryAsync(3);
+            } else {
+                Log.d("DeviceInfo", "Device " + macAddress + " already connected");
+                info.connectionStatus = "Connected";
+                connectionTask = Task.forResult(null);
+            }
+            
             // Always read fresh battery status
-            board.connectWithRetryAsync(3).continueWithTask(task -> {
+            connectionTask.continueWithTask(task -> {
                 if (task.isFaulted() || task.isCancelled()) {
                     Log.e("DeviceInfo", "Connection failed for: " + macAddress);
                     info.connectionStatus = "Failed to connect";
@@ -2192,6 +2138,7 @@ public class MainActivity extends AppCompatActivity implements ServiceConnection
                 }
                 
                 info.connectionStatus = "Connected";
+                isConnected.put(macAddress, true); // Update connection status
                 
                 // Set up a temporary battery route just for this reading
                 Settings settings = board.getModule(Settings.class);
@@ -2226,35 +2173,18 @@ public class MainActivity extends AppCompatActivity implements ServiceConnection
                 int completed = completedUpdates.incrementAndGet();
                 Log.d("DeviceInfo", "Completed " + completed + " of " + totalBoards + " devices");
                 
-                if (completed >= totalBoards) {
+                if (completed >= totalBoards && !timeoutOccurred.get()) {
+                    // Cancel timeout since we completed successfully
+                    timeoutHandler.removeCallbacks(timeoutRunnable);
+                    
                     // Save state with updated battery info
                     saveState();
                     runOnUiThread(() -> {
                         button.setText(originalText);
                         button.setEnabled(true);
+                        updateDeviceGrid(); // Update the device grid with new connection statuses
                         displayDeviceInformation(deviceInfoMap);
                     });
-                }
-                return null;
-            });
-        }
-    }
-
-    private void updateAllBatteriesBeforeStatus() {
-        if (boards.isEmpty()) {
-            displayDeviceInformation();
-            return;
-        }
-
-        // Update battery for all devices then show status
-        AtomicInteger completedUpdates = new AtomicInteger(0);
-        int totalBoards = boards.size();
-        
-        for (MetaWearBoard board : boards) {
-            updateBoardBattery(board).continueWith(task -> {
-                int completed = completedUpdates.incrementAndGet();
-                if (completed >= totalBoards) {
-                    runOnUiThread(() -> displayDeviceInformation());
                 }
                 return null;
             });
@@ -2293,11 +2223,7 @@ public class MainActivity extends AppCompatActivity implements ServiceConnection
                     .append("\n\n");
         }
 
-        new AlertDialog.Builder(this)
-                .setTitle("Device Information & Logging Status")
-                .setMessage(statusMessage.toString())
-                .setPositiveButton("OK", null)
-                .show();
+        showStatusDialog("Device Information & Logging Status", statusMessage.toString());
     }
 
     private void displayDeviceInformation(Map<String, DeviceInfo> deviceInfoMap) {
@@ -2325,10 +2251,6 @@ public class MainActivity extends AppCompatActivity implements ServiceConnection
                     .append("\n\n");
         }
 
-        new AlertDialog.Builder(this)
-                .setTitle("Device Information & Logging Status")
-                .setMessage(infoMessage.toString())
-                .setPositiveButton("OK", null)
-                .show();
+        showStatusDialog("Device Information & Logging Status", infoMessage.toString());
     }
 }
