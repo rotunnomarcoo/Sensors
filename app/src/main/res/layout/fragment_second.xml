@@ -32,7 +32,7 @@
 
     <fragment xmlns:tools="http://schemas.android.com/tools"
         android:id="@+id/scanner_fragment"
-        android:name="com.example.sensors.CustomScannerFragment"
+        android:name="com.example.sensors.ScannerFragment"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"

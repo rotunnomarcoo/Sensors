@@ -1,41 +1,17 @@
 /**
- * SensorConnectionManager - Background worker for MetaWear device monitoring
- * 
- * This worker class provides background monitoring and notification services for
- * MetaWear sensor devices during active logging sessions. It operates independently
- * of the main application UI to ensure continuous device monitoring and user
- * notifications even when the app is in the background.
- * 
- * Key Responsibilities:
- * - Periodic battery status monitoring for connected devices
- * - Background device connection health checks
- * - User notifications for device status updates
- * - Battery level alerts and warnings
- * - Automated device reconnection attempts
- * 
- * Technical Implementation:
- * - Extends AndroidX Worker for reliable background execution
- * - Integrates with WorkManager for scheduled periodic tasks
- * - Uses Android notification system for user alerts
- * - Operates during active logging sessions only
- * - Manages BLE service connections for device communication
- * 
- * Use Cases:
- * - Monitoring device battery levels during extended logging sessions
- * - Alerting users to device disconnections or failures
- * - Providing status updates without user interaction
- * - Ensuring data integrity during background operation
- * 
- * @author MetaWear Sensors App
- * @version 1.0
+ * SensorConnectionManager - Background worker for monitoring MetaWear devices.
+ *
+ * This class ensures continuous monitoring of MetaWear sensors during active logging sessions.
+ * It operates in the background to check battery levels, connection status, and memory usage,
+ * and sends notifications for critical updates.
  */
+
 package com.example.sensors;
 
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.content.Context;
 import android.util.Log;
-import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.core.app.NotificationCompat;
@@ -47,172 +23,180 @@ import com.mbientlab.metawear.android.BtleService;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.Objects;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.zip.CRC32;
 
 /**
- * SensorConnectionManager extends Worker to provide background sensor monitoring
- * 
- * This class implements the Worker pattern for reliable background execution:
- * - Runs independently of UI lifecycle
- * - Survives app backgrounding and process death
- * - Integrates with Android's WorkManager for optimal scheduling
- * - Respects device battery optimization and doze mode
- * - Provides guaranteed execution for critical monitoring tasks
+ * Extends Worker to provide background monitoring for MetaWear devices.
+ *
+ * Responsibilities:
+ * - Periodic battery level checks for connected devices.
+ * - Notifications for low battery or memory alerts.
+ * - Ensures data integrity during background operation.
  */
-public class SensorConnectionManager extends Worker{
-    
-    // Background task execution and scheduling
-    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1); // For future async operations
-    private final Context context = getApplicationContext();  // Application context for notifications
-    
-    // BLE service integration for device communication
-    public static BtleService.LocalBinder serviceBinder;     // Static reference to BLE service
-    
+public class SensorConnectionManager extends Worker {
+
+    // Scheduler for background tasks
+    private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
+
+    // Application context for notifications
+    private final Context context = getApplicationContext();
+
+    // BLE service for device communication
+    public static BtleService.LocalBinder serviceBinder;
+
     /**
-     * Constructor for SensorConnectionManager Worker
-     * 
-     * Required by the Worker class architecture. WorkManager uses this constructor
-     * to instantiate the worker with necessary context and parameters.
-     * 
-     * @param context Application context for the worker
-     * @param workerParams Parameters and configuration for the work execution
+     * Constructor for SensorConnectionManager.
+     *
+     * @param context Application context for the worker.
+     * @param workerParams Parameters for work execution.
      */
     public SensorConnectionManager(@NonNull Context context, @NonNull WorkerParameters workerParams) {
         super(context, workerParams);
     }
 
     /**
-     * Main work execution method called by WorkManager
-     * 
-     * This method performs the core background monitoring operations:
-     * - Checks if logging is currently active
-     * - Iterates through connected devices
-     * - Monitors battery levels and connection status
-     * - Sends notifications for important status updates
-     * - Returns work result status to WorkManager
-     * 
-     * @return Result indicating success, failure, or retry needed
+     * Executes the background monitoring tasks.
+     *
+     * - Checks if logging is active.
+     * - Updates battery levels for connected devices.
+     * - Sends notifications for low battery or memory alerts.
+     *
+     * @return Result indicating success, failure, or retry.
      */
     @NonNull
     @Override
     public Result doWork() {
-        Log.d("Worker","doWorkFunction - Starting battery update cycle");
-        
-        // Only run monitoring during active logging sessions to conserve battery
-        if (!MainActivity.savedMacAddresses.isLogging()) {
-            Log.d("Worker", "Skipping battery updates - logging is not active");
-            return Result.success();
-        }
-        
-        // Get the list of configured devices from MainActivity's SaveStruct
-        ArrayList<String> addresses = MainActivity.savedMacAddresses.getMacAddresses();
+        Log.d("Worker", "Starting battery update cycle");
 
-        if(addresses.isEmpty()){
-            Log.d("Worker", "No devices to check");
+        // Skip monitoring if logging is inactive
+        if (!MainActivity.savedMacAddresses.isLogging()) {
+            Log.d("Worker", "Logging is not active. Skipping updates.");
             return Result.success();
         }
-        
-        Log.d("Worker", "Logging is active - updating battery for " + addresses.size() + " devices");
-        
-        // Update battery information for all devices using the main battery update method
+
+        // Retrieve the list of connected devices
+        ArrayList<String> addresses = MainActivity.savedMacAddresses.getMacAddresses();
+        if (addresses.isEmpty()) {
+            Log.d("Worker", "No devices to monitor.");
+            return Result.success();
+        }
+
+        Log.d("Worker", "Updating battery for " + addresses.size() + " devices.");
+
+        // Iterate through devices and update their battery levels
         if (MainActivity.instance != null && MainActivity.serviceBinder != null && MainActivity.serviceBinder.isBinderAlive()) {
             for (String address : addresses) {
-                // Find the corresponding MetaWearBoard
-                MetaWearBoard targetBoard = null;
-                for (MetaWearBoard board : MainActivity.boards) {
-                    if (board.getMacAddress().equals(address)) {
-                        targetBoard = board;
-                        break;
-                    }
-                }
-                
+                MetaWearBoard targetBoard = findBoardByAddress(address);
+
                 if (targetBoard != null) {
-                    Log.d("Worker", "Updating battery for device: " + address);
-                    final String deviceAddress = address;
-                    final MetaWearBoard finalBoard = targetBoard;
-                    
-                    // Call the main battery update method
-                    MainActivity.instance.runOnUiThread(() -> {
-                        // Use the existing updateBoardBattery method from MainActivity
-                        MainActivity.instance.updateBoardBattery(finalBoard).continueWith(task -> {
-                            // Check battery level after update and send notification/toast if needed
-                            String updatedBattery = MainActivity.savedMacAddresses.getBattery(deviceAddress);
-                            if (!"Unknown".equals(updatedBattery)) {
-                                try {
-                                    int batteryLevel = Integer.parseInt(updatedBattery.replace("%", ""));
-                                    String name = MainActivity.savedMacAddresses.getName(deviceAddress);
-                                    // Send notification and toast if battery is below 30%
-                                    if (batteryLevel < 30) {
-                                        String text = name + " Low Battery: " + updatedBattery;
-                                        sendNotification(deviceAddress, text, "my_channel_id");
-                                        
-                                        // Also show toast on main thread
-                                        /* MainActivity.instance.runOnUiThread(() -> {
-                                            Toast.makeText(MainActivity.instance, 
-                                                text + " - Consider charging device", 
-                                                Toast.LENGTH_LONG).show();
-                                        }); */
-                                        
-                                        Log.w("Worker", "LOW BATTERY ALERT: " + name + " (" + deviceAddress + ") - " + updatedBattery);
-                                    } else {
-                                        Log.d("Worker", "Battery OK: " + name + " (" + deviceAddress + ") - " + updatedBattery);
-                                    }
-                                    
-                                    // Also check memory status
-                                    if (MainActivity.savedMacAddresses.fullMemory()) {
-                                        String memoryText = "Memory Full - " + MainActivity.savedMacAddresses.getRecordTimeString();
-                                        sendNotification("memory_alert", memoryText, "my_channel_id");
-                                    }
-                                    
-                                } catch (NumberFormatException e) {
-                                    Log.w("Worker", "Invalid battery format for " + deviceAddress + ": " + updatedBattery);
-                                }
-                            }
-                            return null;
-                        });
-                    });
+                    updateDeviceBattery(targetBoard, address);
                 } else {
-                    Log.w("Worker", "Board not found for address: " + address);
+                    Log.w("Worker", "Device not found: " + address);
                 }
             }
         } else {
-            Log.e("Worker", "MainActivity instance or service binder not available");
+            Log.e("Worker", "MainActivity or service binder unavailable.");
         }
 
-        // Indicate that the work finished successfully
         return Result.success();
     }
 
-    // Generates a unique notification ID based on the MAC address using CRC32
-    private int generateNotificationId(String macAddress){
-        CRC32 crc = new CRC32();
-        crc.update(macAddress.getBytes(StandardCharsets.UTF_8));
-        long checksum = crc.getValue();
-        return (int) (checksum & 0x7FFFFFFF); // Ensure positive int
+    /**
+     * Finds the MetaWearBoard corresponding to the given MAC address.
+     *
+     * @param address MAC address of the device.
+     * @return The MetaWearBoard instance, or null if not found.
+     */
+    private MetaWearBoard findBoardByAddress(String address) {
+        for (MetaWearBoard board : MainActivity.boards) {
+            if (board.getMacAddress().equals(address)) {
+                return board;
+            }
+        }
+        return null;
     }
 
-    // Sends a notification with the given text and channel
-    public void sendNotification(String macAddress, String text, String notificationChannelId){
-        Log.d("Notification",text);
+    /**
+     * Updates the battery level for a specific device and sends notifications if needed.
+     *
+     * @param board The MetaWearBoard instance.
+     * @param address MAC address of the device.
+     */
+    private void updateDeviceBattery(MetaWearBoard board, String address) {
+        MainActivity.instance.runOnUiThread(() -> {
+            MainActivity.instance.updateBoardBattery(board).continueWith(task -> {
+                String batteryStatus = MainActivity.savedMacAddresses.getBattery(address);
+                if (!"Unknown".equals(batteryStatus)) {
+                    handleBatteryStatus(batteryStatus, address);
+                }
+                return null;
+            });
+        });
+    }
+
+    /**
+     * Handles the battery status and sends notifications for low battery levels.
+     *
+     * @param batteryStatus Battery level as a string.
+     * @param address MAC address of the device.
+     */
+    private void handleBatteryStatus(String batteryStatus, String address) {
+        try {
+            int batteryLevel = Integer.parseInt(batteryStatus.replace("%", ""));
+            String deviceName = MainActivity.savedMacAddresses.getName(address);
+
+            if (batteryLevel < 30) {
+                String notificationText = deviceName + " Low Battery: " + batteryStatus;
+                sendNotification(address, notificationText, "my_channel_id");
+                Log.w("Worker", "Low battery alert: " + deviceName + " - " + batteryStatus);
+            } else {
+                Log.d("Worker", "Battery OK: " + deviceName + " - " + batteryStatus);
+            }
+
+            if (MainActivity.savedMacAddresses.fullMemory()) {
+                sendNotification("memory_alert", "Memory Full", "my_channel_id");
+            }
+        } catch (NumberFormatException e) {
+            Log.w("Worker", "Invalid battery format for " + address + ": " + batteryStatus);
+        }
+    }
+
+    /**
+     * Generates a unique notification ID based on the MAC address.
+     *
+     * @param macAddress MAC address of the device.
+     * @return A unique notification ID.
+     */
+    private int generateNotificationId(String macAddress) {
+        CRC32 crc = new CRC32();
+        crc.update(macAddress.getBytes(StandardCharsets.UTF_8));
+        return (int) (crc.getValue() & 0x7FFFFFFF);
+    }
+
+    /**
+     * Sends a notification with the given text and channel.
+     *
+     * @param macAddress MAC address of the device.
+     * @param text Notification text.
+     * @param notificationChannelId Notification channel ID.
+     */
+    public void sendNotification(String macAddress, String text, String notificationChannelId) {
+        Log.d("Notification", text);
         int id = generateNotificationId(macAddress);
 
-        // Build the notification
         NotificationCompat.Builder builder = new NotificationCompat.Builder(context, notificationChannelId)
-                .setSmallIcon(R.drawable.sensor_icon) // Icon for the notification
-                .setContentTitle("Sensors check") // Title
-                .setContentText(text) // Message
-                .setPriority(NotificationCompat.PRIORITY_DEFAULT) // Priority
-                .setAutoCancel(true); // Automatically removes the notification when clicked
+                .setSmallIcon(R.drawable.sensor_icon)
+                .setContentTitle("Sensors Check")
+                .setContentText(text)
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .setAutoCancel(true);
 
-        // Get the NotificationManager system service
         NotificationManager notificationManager =
                 (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
 
         if (notificationManager != null) {
-            // Create the notification channel if necessary (Android O+)
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
                 NotificationChannel channel = new NotificationChannel(
                         notificationChannelId,
@@ -220,7 +204,6 @@ public class SensorConnectionManager extends Worker{
                         NotificationManager.IMPORTANCE_DEFAULT);
                 notificationManager.createNotificationChannel(channel);
             }
-            // Show the notification
             notificationManager.notify(id, builder.build());
         }
     }

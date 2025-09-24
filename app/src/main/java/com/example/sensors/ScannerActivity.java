@@ -1,8 +1,5 @@
 package com.example.sensors;
 
-import static com.github.mikephil.charting.charts.Chart.LOG_TAG;
-
-import android.app.ProgressDialog;
 import android.bluetooth.BluetoothDevice;
 import android.content.ComponentName;
 import android.content.Intent;
@@ -11,7 +8,6 @@ import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
-import android.content.DialogInterface;
 import android.util.Log;
 import android.widget.Toast;
 import android.widget.Button;
@@ -23,19 +19,9 @@ import androidx.core.content.ContextCompat;
 
 import com.github.mikephil.charting.utils.Utils;
 import com.mbientlab.metawear.MetaWearBoard;
-import com.mbientlab.metawear.UnsupportedModuleException;
 import com.mbientlab.metawear.android.BtleService;
-import com.mbientlab.metawear.data.Acceleration;
-import com.mbientlab.metawear.module.Accelerometer;
-import com.mbientlab.metawear.module.BarometerBosch;
-import com.mbientlab.metawear.module.Gyro;
-import com.mbientlab.metawear.module.Led;
-import com.mbientlab.metawear.module.Logging;
 import com.mbientlab.metawear.module.Settings;
-import com.mbientlab.metawear.module.GyroBmi160;
-import com.mbientlab.metawear.module.AmbientLightLtr329;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.UUID;
 
@@ -193,7 +179,7 @@ public class ScannerActivity extends AppCompatActivity implements ServiceConnect
         isServiceBind = bindService(intent, this, BIND_AUTO_CREATE);
         
         // Start scanning automatically when activity starts
-        CustomScannerFragment scannerFragment = (CustomScannerFragment) getFragmentManager().findFragmentById(R.id.scanner_fragment);
+        ScannerFragment scannerFragment = (ScannerFragment) getFragmentManager().findFragmentById(R.id.scanner_fragment);
         if (scannerFragment != null) {
             // Delay the scan start to ensure fragment is fully initialized and attached
             new android.os.Handler().postDelayed(() -> {
@@ -226,7 +212,7 @@ public class ScannerActivity extends AppCompatActivity implements ServiceConnect
         switch(requestCode) {
             case REQUEST_START_APP:
                 // Restart BLE scan if needed
-                CustomScannerFragment scannerFragment = (CustomScannerFragment) getFragmentManager().findFragmentById(R.id.scanner_fragment);
+                ScannerFragment scannerFragment = (ScannerFragment) getFragmentManager().findFragmentById(R.id.scanner_fragment);
                 if (scannerFragment != null) {
                     scannerFragment.startBleScan();
                 }
@@ -281,7 +267,7 @@ public class ScannerActivity extends AppCompatActivity implements ServiceConnect
         updateConfirmButton();
         
         // Refresh the scanner fragment to update checkmarks
-        CustomScannerFragment scannerFragment = (CustomScannerFragment) getFragmentManager().findFragmentById(R.id.scanner_fragment);
+        ScannerFragment scannerFragment = (ScannerFragment) getFragmentManager().findFragmentById(R.id.scanner_fragment);
         if (scannerFragment != null) {
             scannerFragment.refreshDeviceList();
         }
@@ -308,7 +294,7 @@ public class ScannerActivity extends AppCompatActivity implements ServiceConnect
 
     // Method to refresh the device list (remove connected devices from scan results)
     public void refreshDeviceList() {
-        CustomScannerFragment scannerFragment = (CustomScannerFragment) getFragmentManager().findFragmentById(R.id.scanner_fragment);
+        ScannerFragment scannerFragment = (ScannerFragment) getFragmentManager().findFragmentById(R.id.scanner_fragment);
         if (scannerFragment != null && scannerFragment.getDeviceAdapter() != null) {
             scannerFragment.getDeviceAdapter().refreshDeviceList();
         }

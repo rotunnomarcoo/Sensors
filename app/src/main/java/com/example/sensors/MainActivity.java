@@ -1,7 +1,3 @@
-/**
- * MetaWear Sensor Management Application
- * Graduation Project - Motion Tracking System using Bluetooth LE Sensors
- */
 package com.example.sensors;
 
 // Static imports from ScannerActivity for connection utilities

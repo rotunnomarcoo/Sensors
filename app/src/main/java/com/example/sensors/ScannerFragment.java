@@ -1,5 +1,5 @@
 /**
- * CustomScannerFragment - Advanced BLE device scanner fragment
+ * ScannerFragment - Advanced BLE device scanner fragment
  * 
  * This fragment provides a sophisticated Bluetooth Low Energy (BLE) scanning interface
  * for discovering MetaWear sensor devices. It implements modern Android BLE scanning
@@ -51,14 +51,11 @@ import android.Manifest;
 
 import androidx.core.app.ActivityCompat;
 
-import com.mbientlab.metawear.MetaWearBoard;
-
 import java.util.ArrayList;
 import java.util.List;
-import java.util.UUID;
 
 /**
- * CustomScannerFragment extends Fragment to provide BLE scanning functionality
+ * ScannerFragment extends Fragment to provide BLE scanning functionality
  * 
  * This fragment manages the complete BLE scanning lifecycle:
  * - Initializes Bluetooth adapter and scanner components
@@ -67,7 +64,7 @@ import java.util.UUID;
  * - Processes scan results and updates the device list UI
  * - Manages scanning state and provides user feedback
  */
-public class CustomScannerFragment extends Fragment {
+public class ScannerFragment extends Fragment {
     
     // UI Components for device scanning interface
     private DeviceListAdapter deviceAdapter;    // Adapter for displaying discovered devices
@@ -165,7 +162,7 @@ public class CustomScannerFragment extends Fragment {
      */
     @Override
     public View onCreateView(LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
-        Log.d("Scanner", "CustomScannerFragment onCreateView");
+        Log.d("Scanner", "ScannerFragment onCreateView");
         
         // Inflate the fragment layout
         View view = inflater.inflate(R.layout.custom_scanner_fragment, container, false);
